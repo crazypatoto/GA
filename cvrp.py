@@ -1,19 +1,17 @@
 from copy import deepcopy
 import math
 import random
-from turtle import distance
 import numpy as np
-import threading
 import matplotlib.pyplot as plt
 
 MAP_SIZE = 100
 N_CUSTOMER = 20
-N_GENERATION = 100000
+N_GENERATION = 10000
 N_POPULATION = 30
 CAPACITY = 1.0
 LOAD_LIMIT = 3
-MUTATE_RATE = 0.2
-PATIENCE = 100000
+MUTATE_RATE = 0.6
+PATIENCE = 10000
 
 def initialize_population():
     population = []
@@ -25,7 +23,7 @@ def initialize_population():
 
     return population
 
-def get_fitness(chromosome, distance_matrix, package_weights):
+def get_fitness_min_distance(chromosome, distance_matrix, package_weights):
     current_load = 0
     n_vehicle = 1
     route = [0]
@@ -47,18 +45,37 @@ def get_fitness(chromosome, distance_matrix, package_weights):
     for i in range(len(route)-1):
         total_distance += distance_matrix[route[i]][route[i+1]]
 
-    subroutes = get_subroutes(chromosome, package_weights)
-    distances = []
-    for route in subroutes:
-        distance = 0
-        for i in range(len(route)-1):
-            distance += distance_matrix[route[i]][route[i+1]]
-        distances.append(distance)
+    # subroutes = get_subroutes(chromosome, package_weights)
+    # distances = []
+    # for route in subroutes:
+    #     distance = 0
+    #     for i in range(len(route)-1):
+    #         distance += distance_matrix[route[i]][route[i+1]]
+    #     distances.append(distance)
 
-    fitness = 1 / (np.max(distances) + total_distance  + n_vehicle)
-    # fitness = 1 / (total_distance + n_vehicle)
+    # fitness = 1 / (np.max(distances) + total_distance  + n_vehicle)
+    fitness = 1 / (total_distance + n_vehicle)
     
     return fitness, total_distance
+
+def get_fitness_min_energy(chromosome, distance_matrix, package_weights): # https://www.sciencedirect.com/science/article/pii/S2772390922000142#f0005
+    total_energy = 0
+    total_distance = 0
+    subroutes = get_subroutes(chromosome, package_weights)
+    n_vehicle = len(subroutes)
+
+    for route in subroutes:
+        customers = np.array(route)
+        customers = customers[customers > 0]
+        current_load = np.sum(np.array(package_weights)[customers-1])
+        for i in range(len(route)-1):         
+            total_energy += distance_matrix[route[i]][route[i+1]] * (1 + current_load)
+            total_distance += distance_matrix[route[i]][route[i+1]]
+            current_load -= package_weights[route[i+1]-1]        
+   
+    fitness = 1 / (total_energy)
+    
+    return fitness, total_energy
 
 def get_subroutes(chromosome, package_weights):
     current_load = 0
@@ -160,7 +177,7 @@ def mutate2(chromosome, p=MUTATE_RATE):
     return chromosome
 
 def main():
-    # np.random.seed(12)
+    # np.random.seed(530)
     customers = list(np.random.randint(MAP_SIZE, size=(N_CUSTOMER + 1, 2)) - MAP_SIZE/2) # Customer 0 as depot
     customers[0] = np.zeros(2)
     # package_weights = list(np.random.randint(1,CAPACITY*100,size=N_CUSTOMER)/100)
@@ -169,7 +186,7 @@ def main():
     candidates /= np.max(candidates)        
     np.delete(candidates, np.argmax(candidates))
     np.delete(candidates, np.argmin(candidates))
-    candidates *= 0.8
+    # candidates *= 0.8
     candidates = (candidates * 100).astype(int) / 100    
     package_weights = list(candidates[:N_CUSTOMER])
 
@@ -185,9 +202,13 @@ def main():
     plt.ion()
     patience = 0
     min_distances = []
+    max_fitnesses = []
     population = initialize_population() 
+
+    # get_fitness = get_fitness_min_distance
+    get_fitness = get_fitness_min_energy
     fitnesses, distances = zip(*[get_fitness(chromosome, distance_matrix, package_weights) for chromosome in population]) 
-    elite_chromosome, elite_fitness, elite_distance = population[np.argmax(fitnesses)], np.max(fitnesses), np.min(distances)    
+    elite_chromosome, elite_fitness, elite_distance = population[np.argmax(fitnesses)], np.max(fitnesses), np.min(distances)        
     for g in range(N_GENERATION):                
         plt.clf()    
         selected = [tournament_selection(population, fitnesses) for _ in range(len(population))]  
@@ -214,7 +235,8 @@ def main():
             print("asdd")
         
         print('Gen %d: max_fit = %.5f, min_distance = %.2f' % (g, elite_fitness, elite_distance))        
-        min_distances.append(np.min(elite_distance))
+        min_distances.append(elite_distance)
+        max_fitnesses.append(elite_fitness)
 
         if patience > PATIENCE:
             break
@@ -222,9 +244,21 @@ def main():
         # sub_routes = get_subroutes(elite_chromosome, package_weights)        
         # for route in sub_routes:         
         #     points = [customers[index] for index in route]
-        #     plt.plot(np.array(points)[:,0], np.array(points)[:,1], '-')
-        # plt.plot(np.array(customers)[1:,0], np.array(customers)[1:,1], 'bo')
+        #     p = plt.plot(np.array(points)[:,0], np.array(points)[:,1], '-')
+        #     color = p[0].get_color()
+
+        #     xs, ys = np.array(points)[:,0],np.array(points)[:,1]
+        #     for i in range(len(xs)-1):
+        #         d = np.linalg.norm(np.array([xs[i+1],ys[i+1]])-np.array([xs[i],ys[i]]))
+        #         plt.arrow((xs[i+1]+xs[i])/2, (ys[i+1]+ys[i])/2, (xs[i+1]-xs[i])/d, (ys[i+1]-ys[i])/d, shape='full', lw=0, length_includes_head=True, head_width=MAP_SIZE/50, color=color)            
+        # plt.plot(np.array(customers)[1:,0], np.array(customers)[1:,1], 'o', color='blue')
         # plt.plot(np.array(customers)[0,0], np.array(customers)[0,1], 'ro')
+
+        # plt.title('Routing Result')
+        # plt.xlabel('X-Coordinate')
+        # plt.ylabel('Y-Coordinate')
+        # plt.xlim([-MAP_SIZE/2, MAP_SIZE/2])
+        # plt.ylim([-MAP_SIZE/2, MAP_SIZE/2])
 
         # for i in range(1, len(customers)):
         #     x, y = customers[i][0], customers[i][1]
@@ -233,20 +267,35 @@ def main():
         # plt.pause(1e-6)
                        
 
-    plt.ioff()
+    plt.ioff()    
     sub_routes = get_subroutes(elite_chromosome, package_weights)
-    print(len(sub_routes))
+    print(len(sub_routes))    
     for route in sub_routes:         
         points = [customers[index] for index in route]
-        plt.plot(np.array(points)[:,0], np.array(points)[:,1], '-')
-    plt.plot(np.array(customers)[1:,0], np.array(customers)[1:,1], 'bo')
+        p = plt.plot(np.array(points)[:,0], np.array(points)[:,1], '-')
+        color = p[0].get_color()
+
+        xs, ys = np.array(points)[:,0],np.array(points)[:,1]
+        for i in range(len(xs)-1):
+            d = np.linalg.norm(np.array([xs[i+1],ys[i+1]])-np.array([xs[i],ys[i]]))
+            plt.arrow((xs[i+1]+xs[i])/2, (ys[i+1]+ys[i])/2, (xs[i+1]-xs[i])/d, (ys[i+1]-ys[i])/d, shape='full', lw=0, length_includes_head=True, head_width=MAP_SIZE/50, color=color)            
+    plt.plot(np.array(customers)[1:,0], np.array(customers)[1:,1], 'o', color='blue')
     plt.plot(np.array(customers)[0,0], np.array(customers)[0,1], 'ro')
+
+    plt.title('Routing Result')
+    plt.xlabel('X-Coordinate')
+    plt.ylabel('Y-Coordinate')
+    plt.xlim([-MAP_SIZE/2, MAP_SIZE/2])
+    plt.ylim([-MAP_SIZE/2, MAP_SIZE/2])
 
     for i in range(1, len(customers)):
         x, y = customers[i][0], customers[i][1]
         plt.text(x, y, str(package_weights[i-1]), color='black', fontsize=10)
     plt.figure()
     plt.plot(min_distances)
+    plt.title('Minimum weighted distance evolution')
+    plt.xlabel('Generation number')
+    plt.ylabel('Minimum weighted distance')
     plt.show()
 
 if __name__ == '__main__':
